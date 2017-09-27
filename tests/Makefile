@@ -20,7 +20,7 @@ $(NAME_ARGS): $(OBJ_ARGS)
 	$(CC) -o $(NAME_ARGS) $(OBJ_ARGS) $(LDFLAGS)
 
 clean:
-	$(RM) $(OBJ_STDIN) $(OBJ_ARGS) $(NAME_NAME) $(NAME_STDIN)
+	$(RM) $(OBJ_STDIN) $(OBJ_ARGS) $(NAME_STDIN) $(NAME_ARGS)
 
 re: clean all
 
