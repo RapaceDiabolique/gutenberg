@@ -6,8 +6,9 @@
 
 
 from sys import stdout
-from os import access, X_OK, mkfifo, environ
-from os.path import realpath, isfile
+from os import access, X_OK, mkfifo, environ, stat
+from os.path import realpath
+from stat import S_ISFIFO
 from io import StringIO
 from math import log
 from signal import signal, SIGINT
@@ -46,7 +47,7 @@ entries = [
 # Misc
 #
 MAX_ITER = 1000
-FIFO = "/tmp/gutenberg"
+FIFO = "/tmp/gutenberg.fifo"
 silent = False
 
 
@@ -99,12 +100,12 @@ def check(binary):
     else:
         print_silent("[+] Binary is executable")
     try:
-        if not isfile(realpath(FIFO)):
-            mkfifo(FIFO)
+        if not S_ISFIFO(stat(FIFO).st_mode):
+            print_silent("[-] Unable to create named pipe")
+            print_silent("[-] Exiting")
+            exit(1)
     except OSError as oe:
-        print_silent("[-] " + oe)
-        print_silent("[-] Exiting")
-        exit(1)
+        mkfifo(FIFO)
     pass
 
 
